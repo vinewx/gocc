@@ -1,0 +1,252 @@
+name: gocc-bin
+
+on:
+  repository_dispatch:
+  push:
+    branches: 
+      - master
+    paths:
+      - '.github/workflows/gocc.yml'
+
+jobs:
+
+  build:
+    
+    runs-on: ubuntu-latest
+    if: github.repository == 'vinewx/gocc'
+    
+    steps:
+      
+      - name: Checkout
+        uses: actions/checkout@master
+        with:
+          ref: master
+
+      - name: Initialization Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /etc/apt/sources.list.d/* /usr/bin/upx ./*
+          wget -q -O - https://github.com/upx/upx/releases/download/v3.96/upx-3.96-amd64_linux.tar.xz | sudo tar -Jx --strip 1 -f - -C /usr/bin
+          
+      - name: Install Repo
+        run: |
+          go get github.com/liuzl/gocc
+          go get github.com/liuzl/goutil
+
+          
+      - name: Build
+        run: |
+          go mod init github.com/liuzl/gocc/cmd
+          
+          export GO111MODULE=on
+          echo "Setting GO111MODULE to" $GO111MODULE
+          
+          UPX=false
+          if hash upx 2>/dev/null; then
+              UPX=true
+          fi
+          
+          VERSION=`date -u +%Y%m%d`
+          LDFLAGS="-X main.VERSION=$VERSION -s -w"
+          GCFLAGS=""
+          
+          # AMD64 
+          OSES=(linux darwin windows)
+          for os in ${OSES[@]}; do
+              suffix=""
+              if [ "$os" == "windows" ]
+              then
+                  suffix=".exe"
+              fi
+              env CGO_ENABLED=0 GOOS=$os GOARCH=amd64 go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o gocc${suffix} github.com/liuzl/gocc/cmd
+              if $UPX; then upx -9 gocc${suffix};fi
+              tar -zcf gocc-${os}-amd64.tar.gz gocc${suffix} && rm gocc${suffix}
+          done
+          
+          # 386
+          OSES=(linux windows)
+          for os in ${OSES[@]}; do
+              suffix=""
+              if [ "$os" == "windows" ]
+              then
+                  suffix=".exe"
+              fi
+              env CGO_ENABLED=0 GOOS=$os GOARCH=386 go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o gocc${suffix} github.com/liuzl/gocc/cmd
+              if $UPX; then upx -9 gocc${suffix};fi
+              tar -zcf gocc-${os}-386.tar.gz gocc${suffix} && rm gocc${suffix}
+          done
+          
+          # ARM
+          ARMS=(5 6 7)
+          for v in ${ARMS[@]}; do
+              env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=$v go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o gocc  github.com/liuzl/gocc/cmd
+          if $UPX; then upx -9 gocc;fi
+          tar -zcf gocc-linux-armv$v.tar.gz gocc && rm gocc
+          done
+          
+          # ARM64
+          env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o gocc  github.com/liuzl/gocc/cmd
+          if $UPX; then upx -9 gocc;fi
+          tar -zcf gocc-linux-arm64.tar.gz gocc && rm gocc
+          
+          #MIPS32LE
+          env CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o gocc github.com/liuzl/gocc/cmd
+          if $UPX; then upx -9 gocc;fi
+          tar -zcf gocc-linux-mipsle.tar.gz gocc && rm gocc
+          env CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o gocc github.com/liuzl/gocc/cmd
+          if $UPX; then upx -9 gocc;fi
+          tar -zcf gocc-linux-mips.tar.gz gocc && rm gocc
+
+
+
+      - name: Assemble Artifact
+        id: assemble_artifact
+        run: |
+
+          release_tag="v$(date +%Y%m%d)"
+          darwin_amd64="gocc-darwin-amd64.tar.gz"
+          linux_386="gocc-linux-386.tar.gz"
+          linux_amd64="gocc-linux-amd64.tar.gz"
+          linux_armv5="gocc-linux-armv5.tar.gz"
+          linux_armv6="gocc-linux-armv6.tar.gz"
+          linux_arm64="gocc-linux-arm64.tar.gz"
+          linux_armv7="gocc-linux-armv7.tar.gz"
+          linux_mips="gocc-linux-mips.tar.gz"
+          linux_mipsle="gocc-linux-mipsle.tar.gz"
+          windows_386="gocc-windows-386.tar.gz"
+          windows_amd64="gocc-windows-amd64.tar.gz"
+          echo "##[set-output name=release_tag;]$release_tag"
+          echo "##[set-output name=darwin_amd64;]$darwin_amd64"
+          echo "##[set-output name=linux_386;]$linux_386"
+          echo "##[set-output name=linux_amd64;]$linux_amd64"
+          echo "##[set-output name=linux_armv5;]$linux_armv5"
+          echo "##[set-output name=linux_armv6;]$linux_armv6"
+          echo "##[set-output name=linux_arm64;]$linux_arm64"
+          echo "##[set-output name=linux_armv7;]$linux_armv7"
+          echo "##[set-output name=linux_mips;]$linux_mips"
+          echo "##[set-output name=linux_mipsle;]$linux_mipsle"
+          echo "##[set-output name=windows_386;]$windows_386"
+          echo "##[set-output name=windows_amd64;]$windows_amd64"
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          tag_name: ${{ steps.assemble_artifact.outputs.release_tag }}
+          release_name: gocc-bin ${{ steps.assemble_artifact.outputs.release_tag }}
+          draft: false
+          prerelease: false
+
+      - name: Upload darwin-amd64 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.darwin_amd64 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.darwin_amd64 }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-386 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_386 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_386 }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-amd64 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_amd64 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_amd64 }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-armv5 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_armv5 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_armv5 }}
+          asset_content_type: application/gz
+
+
+      - name: Upload linux-arm6 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_armv6 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_armv6 }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-arm64 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_arm64 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_arm64 }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-arm7 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_armv7 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_armv7 }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-mips Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_mips }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_mips }}
+          asset_content_type: application/gz
+
+      - name: Upload linux-mipsle Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.linux_mipsle }}
+          asset_name: ${{ steps.assemble_artifact.outputs.linux_mipsle }}
+          asset_content_type: application/gz
+
+      - name: Upload windows-386 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.windows_386 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.windows_386 }}
+          asset_content_type: application/gz
+
+      - name: Upload windows-amd64 Asset
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.sec_token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ${{ steps.assemble_artifact.outputs.windows_amd64 }}
+          asset_name: ${{ steps.assemble_artifact.outputs.windows_amd64 }}
+          asset_content_type: application/gz
